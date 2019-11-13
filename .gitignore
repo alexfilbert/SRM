@@ -15,7 +15,7 @@ __pycache__/
 *.pkl
 
 # numpy datafile
-*.npy
+#*.npy
 
 # vim temp file
 *.swp
