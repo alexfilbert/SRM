@@ -19,7 +19,7 @@ __pycache__/
 *.swp
 
 # don't track data folder
-/data
-/data_old
+#/data
+#/data_old
 # mac system file
 *.DS_Store
