@@ -86,25 +86,9 @@ def align(movie_data, options, args, lrh):
   
     for m in range(nsubjs):
         bSig_x[m*nvoxel:(m+1)*nvoxel,m*nvoxel:(m+1)*nvoxel] += sigma2[m]*np.identity(nvoxel)
-
-
-    print 'In SRM'
-    print nvoxel
-    print nsubjs
-    print nTR
-
+  
     inv_bSig_x = scipy.linalg.inv(bSig_x)
-
-    print bSig_s.shape
-    print bW.shape
-    print inv_bSig_x.shape
-    print bX.shape
-
-
     ES = bSig_s.T.dot(bW.T).dot(inv_bSig_x).dot(bX)
-
-
-
     bSig_s = bSig_s - bSig_s.T.dot(bW.T).dot(inv_bSig_x).dot(bW).dot(bSig_s) + ES.dot(ES.T)/float(nTR)
   
     for m in range(nsubjs):

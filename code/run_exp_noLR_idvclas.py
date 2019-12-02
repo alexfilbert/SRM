@@ -9,7 +9,7 @@
 # format data into python .npz
 #
 # by Cameron Po-Hsuan Chen @ Princeton
- 
+
 
 import numpy as np, scipy, random, sys, math, os, copy
 import scipy.io
@@ -17,6 +17,7 @@ from scipy import stats
 import argparse
 sys.path.append('/jukebox/ramadge/pohsuan/scikit-learn/sklearn')
 from sklearn.svm import NuSVC
+from sklearn.model_selection import StratifiedKFold
 from sklearn import preprocessing
 #from scikits.learn.svm import NuSVC
 import importlib
@@ -83,10 +84,10 @@ opt_group_folder = 'all' + str(args.nfeature_all) + 'feat/' + 'group' + str(args
 # rondo options
 
 
-options = {'input_path'  : '/jukebox/ramadge/pohsuan/SRM/data/input/'+data_folder,\
-           'working_path': '/fastscratch/pohsuan/SRM/data/working/'+\
+options = {'input_path'  : '/home/beta/Documents/SRM/code/'+data_folder,\
+           'working_path': '/home/beta/Documents/SRM/code/'+\
                            data_folder+exp_folder+alg_folder,\
-           'output_path' : '/jukebox/ramadge/pohsuan/SRM/data/output/'+\
+           'output_path' : '/home/beta/Documents/SRM/code/'+\
                             data_folder+exp_folder+alg_folder+opt_group_folder}
 print '----------------experiment paths----------------'
 pprint.pprint(options,width=1)
@@ -112,12 +113,27 @@ print 'start loading data'
 if args.exptype in ['idvclas', 'idvclas_svm', 'idvclas_svm_no2ndSRM','idvclas_svm_on1st']:
     if args.loo == None:
         sys.exit('no loo subject')
+    #
+    # movie_data = scipy.io.loadmat(options['input_path']+'movie_data.mat')
+    # movie_data = movie_data['movie_data']
 
-    movie_data = scipy.io.loadmat(options['input_path']+'movie_data.mat')
-    movie_data = movie_data['movie_data']
+
+    movie_data = np.load('/home/beta/Documents/SRM/code/input/tr_data.npy')
+
+
+    movie_data = np.swapaxes(movie_data, 1, 2)
+    movie_data = np.swapaxes(movie_data, 0, 2)
+
+    print movie_data.shape
+
 
     align_data = np.zeros((movie_data.shape))
+
+
+
     nsubj_group = movie_data.shape[2]/2 #assuming two groups, and they have equal amount of people
+
+    print nsubj_group
 
     for m in range(align_data.shape[2]):
         align_data[:,:,m] = stats.zscore(movie_data[:,:,m].T ,axis=0, ddof=1).T
@@ -132,8 +148,11 @@ if args.exptype in ['idvclas', 'idvclas_svm', 'idvclas_svm_no2ndSRM','idvclas_sv
         os.makedirs(options_all['working_path'])
 
     if args.nfeature_all is not 0:
+
         if not os.path.exists(options_all['working_path']+args.align_algo+'__10.npz'):
             for iter in range(10):
+                print 'iter number'
+                print iter
                 if os.path.exists(options_all['working_path']+args.align_algo+'__10.npz'):
                     break
                 algo = importlib.import_module('alignment_algo.'+args.align_algo)
@@ -141,8 +160,13 @@ if args.exptype in ['idvclas', 'idvclas_svm', 'idvclas_svm_no2ndSRM','idvclas_sv
 
         workspace = np.load(options_all['working_path']+args.align_algo+'__10.npz')
 
-        W = workspace['R']
-        S = workspace['G'].T
+        W = workspace['bW']
+        S = workspace['ES'].T
+        W = np.swapaxes(W, 0, 1)
+        S = np.swapaxes(S, 0, 1)
+        W = np.reshape(W, (38, 38, nsubj_group * 2))
+
+        nsubj_test = nsubj_group // 5
 
         if args.exptype != 'idvclas_svm_on1st':
             for m in range(align_data.shape[2]):
@@ -153,216 +177,262 @@ if args.exptype in ['idvclas', 'idvclas_svm', 'idvclas_svm_no2ndSRM','idvclas_sv
                 tmp = W[:,:,m].dot(S)
                 align_data[:,:,m] = stats.zscore(tmp.T ,axis=0, ddof=1).T    
     else:
-        print 'shared all feature = 0'        
+        print 'shared all feature = 0'
 
 
-    align_data_group1 = np.copy(align_data[:,:,:nsubj_group])
-    align_data_group2 = np.copy(align_data[:,:,nsubj_group:])
+    # k determines number of splits
+    k = 2
 
-    pred_data_group1 = np.copy(align_data_group1[:,:,args.loo])
-    pred_data_group2 = np.copy(align_data_group2[:,:,args.loo])
-else:
-    sys.exit('invalid experiment type')
+    X = np.swapaxes(align_data, 0, 2)
+    y = np.zeros(shape=(nsubj_group*2,1))
 
-if args.loo != None:
-    align_data_group1_loo = np.delete(align_data_group1, args.loo,2)
-    align_data_group2_loo = np.delete(align_data_group2, args.loo,2)
+    for i in range(nsubj_group * 2):
+        if i < nsubj_group:
+            np.append(y, 0)
+        else:
+            np.append(y, 1)
 
-# run alignment
-print 'start alignment'
-if args.align_algo != 'noalign':
-    algo = importlib.import_module('alignment_algo.'+args.align_algo)
+    skf = StratifiedKFold(n_splits=k)
 
-options_group1 = copy.deepcopy(options)
-options_group1['working_path'] = options['working_path']+opt_group_folder+'group1/'
-options_group2 = copy.deepcopy(options)
-options_group2['working_path'] = options['working_path']+opt_group_folder+'group2/'
-args.nfeature = args.nfeature_group
+    for train_index, test_index in skf.split(X, y):
+        nsubj_train_group = len(train_index)
+        nsubj_test_group = len(test_index)
 
-if args.strfresh:
-  if os.path.exists(options_group1['working_path']+args.align_algo+'__current.npz'):
-    os.remove(options_group1['working_path']+args.align_algo+'__current.npz')
-  if os.path.exists(options_group2['working_path']+args.align_algo+'__current.npz'):
-    os.remove(options_group2['working_path']+args.align_algo+'__current.npz')
+        nsubj_group = (nsubj_train_group + nsubj_test_group) / 2
+        nsubj_test = nsubj_test_group / 2
 
-if not os.path.exists(options_group1['working_path']):
-    os.makedirs(options_group1['working_path'])
-if not os.path.exists(options_group2['working_path']):
-    os.makedirs(options_group2['working_path'])
+        align_data_train, align_data_test = align_data[:,:,train_index], align_data[:,:,test_index]
+        #y_train, y_test = y[train_index], y[test_index]
+
+        align_data_group1 = np.copy(align_data_train[:,:,:nsubj_train_group / 2])
+        pred_data_group1 = np.copy(align_data_test[:,:,:nsubj_test_group / 2])
+
+        # align_data_group1 = np.copy(align_data[:,:,:nsubj_group])
+        align_data_group2 = np.copy(align_data_train[:,:,nsubj_train_group / 2:])
+        pred_data_group2 = np.copy(align_data_test[:,:,nsubj_test_group / 2:])
+
+        # pred_data_group1 = np.copy(align_data_group1[:,:,args.loo])
+        # pred_data_group2 = np.copy(align_data_group2[:,:,args.loo])
+
+        align_data_group1_loo = align_data_group1
+        align_data_group2_loo = align_data_group2
+
+        # run alignment
+        print 'start alignment'
+        if args.align_algo != 'noalign':
+            algo = importlib.import_module('alignment_algo.'+args.align_algo)
+
+        options_group1 = copy.deepcopy(options)
+        options_group1['working_path'] = options['working_path']+opt_group_folder+'group1/'
+        options_group2 = copy.deepcopy(options)
+        options_group2['working_path'] = options['working_path']+opt_group_folder+'group2/'
+        args.nfeature = args.nfeature_group
+
+        if args.strfresh:
+            if os.path.exists(options_group1['working_path']+args.align_algo+'__current.npz'):
+                os.remove(options_group1['working_path']+args.align_algo+'__current.npz')
+            if os.path.exists(options_group2['working_path']+args.align_algo+'__current.npz'):
+                os.remove(options_group2['working_path']+args.align_algo+'__current.npz')
+
+        if not os.path.exists(options_group1['working_path']):
+            os.makedirs(options_group1['working_path'])
+        if not os.path.exists(options_group2['working_path']):
+            os.makedirs(options_group2['working_path'])
 
 
-for itr in range(args.niter):
-    if  args.align_algo not in ['noalign'] and  args.exptype not in ['idvclas_svm_no2ndSRM','idvclas_svm_on1st']:
+        for itr in range(args.niter):
+            if  args.align_algo not in ['noalign'] and  args.exptype not in ['idvclas_svm_no2ndSRM','idvclas_svm_on1st']:
 
-        print '\nalign group1'
-        new_niter = algo.align(align_data_group1_loo, options_group1, args, '')
-        workspace_group1 = np.load(options_group1['working_path']+args.align_algo+'__'+str(new_niter)+'.npz')
-        S_group1 = workspace_group1['G'].T
-        W_group1 = workspace_group1['R']
-        #S_group1 = stats.zscore(workspace_group1['G'], axis=0, ddof=1).T
-        workspace_group1.close()
+                print '\nalign group1'
+                new_niter = algo.align(align_data_group1_loo, options_group1, args, '')
+                workspace_group1 = np.load(options_group1['working_path']+args.align_algo+'__'+str(new_niter)+'.npz')
+                S_group1 = workspace_group1['ES'].T
+                W_group1 = workspace_group1['bW']
+                #S_group1 = stats.zscore(workspace_group1['G'], axis=0, ddof=1).T
+                workspace_group1.close()
 
-        print '\nalign group2'
-        new_niter = algo.align(align_data_group2_loo, options_group2, args, '')
-        workspace_group2 = np.load(options_group2['working_path']+args.align_algo+'__'+str(new_niter)+'.npz')
-        S_group2 = workspace_group2['G'].T
-        W_group2 = workspace_group2['R']
-        #S_group2 = stats.zscore(workspace_group2['G'],axis=0, ddof=1).T
-        workspace_group2.close()
+                W_group1 = np.swapaxes(W_group1, 0, 1)
 
-    print args.exptype
-    if args.exptype == 'idvclas':
-        accu = []
-        for label, pred_data in enumerate([pred_data_group1, pred_data_group2]):
-            Am = pred_data.dot(S_group1.T)
-            pert = np.zeros((Am.shape))
-            np.fill_diagonal(pert,1)
+                S_group1 = np.swapaxes(S_group1, 0, 1)
+                print "!!!!!!"
+                print W_group1.shape
+                W_group1 = np.reshape(W_group1, (38, 38, nsubj_group - nsubj_test))
 
-            U1, _, V1 = np.linalg.svd(Am+0.00*pert,full_matrices=False)
-            Am = pred_data.dot(S_group2.T)
-            U2, _, V2 = np.linalg.svd(Am+0.00*pert,full_matrices=False)
+                print '\nalign group2'
+                new_niter = algo.align(align_data_group2_loo, options_group2, args, '')
+                workspace_group2 = np.load(options_group2['working_path']+args.align_algo+'__'+str(new_niter)+'.npz')
+                S_group2 = workspace_group2['ES'].T
+                W_group2 = workspace_group2['bW']
+                #S_group2 = stats.zscore(workspace_group2['G'],axis=0, ddof=1).T
+                workspace_group2.close()
 
-            W1 = U1.dot(V1)
-            W2 = U2.dot(V2)
+                W_group2 = np.swapaxes(W_group2, 0, 1)
+                S_group2 = np.swapaxes(S_group2, 0, 1)
+                W_group2 = np.reshape(W_group2, (38, 38,  nsubj_group - nsubj_test))
 
-            err1 = np.linalg.norm(pred_data-W1.dot(S_group1),'fro')
-            err2 = np.linalg.norm(pred_data-W2.dot(S_group2),'fro')
-            if label == 0:
-                print '\nerr1:{:.3f}, err2:{:.3f}, err2-err1:{}'.format(err1,err2,err2-err1),
+            print args.exptype
+            if args.exptype == 'idvclas':
+                accu = []
+                for label, pred_data in enumerate([pred_data_group1, pred_data_group2]):
+                    Am = pred_data.dot(S_group1.T)
+                    pert = np.zeros((Am.shape))
+                    np.fill_diagonal(pert,1)
+
+                    U1, _, V1 = np.linalg.svd(Am+0.00*pert,full_matrices=False)
+                    Am = pred_data.dot(S_group2.T)
+                    U2, _, V2 = np.linalg.svd(Am+0.00*pert,full_matrices=False)
+
+                    W1 = U1.dot(V1)
+                    W2 = U2.dot(V2)
+
+                    err1 = np.linalg.norm(pred_data-W1.dot(S_group1),'fro')
+                    err2 = np.linalg.norm(pred_data-W2.dot(S_group2),'fro')
+                    if label == 0:
+                        print '\nerr1:{:.3f}, err2:{:.3f}, err2-err1:{}'.format(err1,err2,err2-err1),
+                    else:
+                        print 'err1:{:.3f}, err2:{:.3f}, err1-err2:{}'.format(err1,err2,err1-err2),
+
+                    if err2 - err1 > 0:
+                        accu.append(int(label == 0))
+                    elif err1 - err2 > 0:
+                        accu.append(int(label == 1))
+                    print accu
+            elif args.exptype == 'idvclas_svm':
+                dim = args.nvoxel*args.nTR
+                trn_data  = np.zeros((nsubj_group*2-nsubj_test*2, dim))
+                tst_data  = np.zeros((nsubj_test*2, dim))
+
+                trn_label = np.zeros(nsubj_group*2-nsubj_test*2)
+                tst_label = np.zeros(nsubj_test*2)
+
+                for i in xrange(W_group1.shape[2]):
+                    tmp1 = W_group1[:, :, i].dot(S_group1)
+                    trn_data[i,:] = tmp1.reshape(1, dim)
+                    trn_label[i] = 0
+                    tmp2 = W_group2[:, :, i].dot(S_group2)
+                    print tmp2.shape
+                    trn_data[i+nsubj_group-nsubj_test,:] = tmp2.reshape(1, dim)
+                    trn_label[i+nsubj_group-nsubj_test] = 1
+
+                # tmp = pred_data_group1.reshape(1, dim)
+
+                # print pred_data_group1.shape
+
+                for i in xrange(nsubj_test):
+                    tst_data[i, :] = pred_data_group1[:, :, i].reshape(1, dim)
+                    print  pred_data_group2[:, :, i].shape
+                    tst_data[nsubj_test + i, :] = pred_data_group2[:, :, i].reshape(1, dim)
+
+
+                # tst_data[:nsubj_test, :] = pred_data_group1[:nsubj_test].reshape(1, dim)
+                # tst_data[nsubj_test:, :] = pred_data_group2[nsubj_test:].reshape(1, dim)
+                tst_label[:nsubj_test] = 0
+                tst_label[nsubj_test:] = 1
+
+                """
+                print 'standardization'
+                print trn_data
+                print tst_data
+                trn_data_scaled = preprocessing.scale(trn_data)
+                tst_data_scaled = preprocessing.scale(tst_data)
+                print trn_data_scaled
+                print tst_data_scaled
+                clf = NuSVC(nu=0.5, kernel = 'linear')
+                clf.fit(trn_data_scaled, trn_label)
+                pred_label = clf.predict(tst_data_scaled)
+                print pred_label
+                print clf.decision_function(tst_data_scaled)
+                accu = sum(pred_label == tst_label)/float(len(pred_label))
+                """
+            
+            elif args.exptype == 'idvclas_svm_no2ndSRM':
+                dim = args.nvoxel*args.nTR
+                trn_data  = np.zeros((nsubj_group*2-2, dim))
+                tst_data  = np.zeros((2, dim))
+
+                trn_label = np.zeros(nsubj_group*2-2)
+                tst_label = np.zeros(2)
+
+                for i in xrange(align_data_group1_loo.shape[2]):
+                    trn_data[i,:] = align_data_group1_loo[:,:,i].reshape(1, dim)
+                    trn_label[i] = 0
+                    trn_data[i+nsubj_group-1,:] = align_data_group2_loo[:,:,i].reshape(1, dim)
+                    trn_label[i+nsubj_group-1] = 1
+
+                tst_data[0, :] = pred_data_group1.reshape(1, dim)
+                tst_data[1, :] = pred_data_group2.reshape(1, dim)
+                tst_label[0] = 0
+                tst_label[1] = 1
+
+                """
+                print 'standardization'
+                trn_data_scaled = preprocessing.scale(trn_data)
+                tst_data_scaled = preprocessing.scale(tst_data)
+                print trn_data_scaled
+                print tst_data_scaled
+                clf = NuSVC(nu=0.5, kernel = 'linear')
+                clf.fit(trn_data_scaled, trn_label)
+                pred_label = clf.predict(tst_data_scaled)
+                print pred_label
+                print clf.decision_function(tst_data_scaled)
+                accu = sum(pred_label == tst_label)/float(len(pred_label))
+                """
+
+            elif args.exptype == 'idvclas_svm_on1st':
+                dim = args.nvoxel*args.nTR
+                trn_data  = np.zeros((nsubj_group*2-2, dim))
+                tst_data  = np.zeros((2, dim))
+
+                trn_label = np.zeros(nsubj_group*2-2)
+                tst_label = np.zeros(2)
+
+                for i in xrange(align_data_group1_loo.shape[2]):
+                    trn_data[i,:] = align_data_group1_loo[:,:,i].reshape(1, dim)
+                    trn_label[i] = 0
+                    trn_data[i+nsubj_group-1,:] = align_data_group2_loo[:,:,i].reshape(1, dim)
+                    trn_label[i+nsubj_group-1] = 1
+
+                tst_data[0, :] = pred_data_group1.reshape(1, dim)
+                tst_data[1, :] = pred_data_group2.reshape(1, dim)
+                tst_label[0] = 0
+                tst_label[1] = 1
+
+                """
+                print 'standardization'
+                trn_data = preprocessing.scale(trn_data)
+                tst_data = preprocessing.scale(tst_data)
+                clf = NuSVC(nu=0.5, kernel = 'linear')
+                clf.fit(trn_data, trn_label)
+                pred_label = clf.predict(tst_data)
+                print pred_label
+                print clf.decision_function(tst_data)
+                accu = sum(pred_label == tst_label)/float(len(pred_label))
+                """
+
+            print 'standardization'
+            #print trn_data
+            #print tst_data
+            #trn_data_scaled = preprocessing.scale(trn_data)
+            #tst_data_scaled = preprocessing.scale(tst_data)
+            scaler = preprocessing.StandardScaler().fit(trn_data)
+            trn_data_scaled = scaler.transform(trn_data)
+            tst_data_scaled = scaler.transform(tst_data)
+            #print trn_data_scaled
+            #print tst_data_scaled
+            clf = NuSVC(nu=0.5, kernel = 'linear')
+            clf.fit(trn_data_scaled, trn_label)
+            pred_label = clf.predict(tst_data_scaled)
+            print pred_label
+            print clf.decision_function(tst_data_scaled)
+            accu = sum(pred_label == tst_label)/float(len(pred_label))
+
+            if args.align_algo in ['ppca_idvclas','pica_idvclas']:
+                for it in range(11):
+                    np.savez_compressed(options['working_path']+opt_group_folder+args.align_algo+'_acc_'+str(it)+'.npz',accu = accu)
             else:
-                print 'err1:{:.3f}, err2:{:.3f}, err1-err2:{}'.format(err1,err2,err1-err2),
-
-            if err2 - err1 > 0:
-                accu.append(int(label == 0))
-            elif err1 - err2 > 0:
-                accu.append(int(label == 1))
-            print accu
-    elif args.exptype == 'idvclas_svm':
-        dim = args.nvoxel*args.nTR
-        trn_data  = np.zeros((nsubj_group*2-2, dim))
-        tst_data  = np.zeros((2, dim))
-
-        trn_label = np.zeros(nsubj_group*2-2)
-        tst_label = np.zeros(2)
-
-        for i in xrange(W_group1.shape[2]):
-            tmp1 = W_group1[:, :, i].dot(S_group1)
-            trn_data[i,:] = tmp1.reshape(1, dim)
-            trn_label[i] = 0
-            tmp2 = W_group2[:, :, i].dot(S_group2)
-            trn_data[i+nsubj_group-1,:] = tmp2.reshape(1, dim)
-            trn_label[i+nsubj_group-1] = 1
-
-        tst_data[0, :] = pred_data_group1.reshape(1, dim)
-        tst_data[1, :] = pred_data_group2.reshape(1, dim)
-        tst_label[0] = 0
-        tst_label[1] = 1
-
-        """
-        print 'standardization'
-        print trn_data
-        print tst_data
-        trn_data_scaled = preprocessing.scale(trn_data)
-        tst_data_scaled = preprocessing.scale(tst_data)
-        print trn_data_scaled
-        print tst_data_scaled
-        clf = NuSVC(nu=0.5, kernel = 'linear')
-        clf.fit(trn_data_scaled, trn_label)
-        pred_label = clf.predict(tst_data_scaled)
-        print pred_label
-        print clf.decision_function(tst_data_scaled)
-        accu = sum(pred_label == tst_label)/float(len(pred_label))
-        """
-    
-    elif args.exptype == 'idvclas_svm_no2ndSRM':
-        dim = args.nvoxel*args.nTR
-        trn_data  = np.zeros((nsubj_group*2-2, dim))
-        tst_data  = np.zeros((2, dim))
-
-        trn_label = np.zeros(nsubj_group*2-2)
-        tst_label = np.zeros(2)
-
-        for i in xrange(align_data_group1_loo.shape[2]):
-            trn_data[i,:] = align_data_group1_loo[:,:,i].reshape(1, dim)
-            trn_label[i] = 0
-            trn_data[i+nsubj_group-1,:] = align_data_group2_loo[:,:,i].reshape(1, dim)
-            trn_label[i+nsubj_group-1] = 1
-
-        tst_data[0, :] = pred_data_group1.reshape(1, dim)
-        tst_data[1, :] = pred_data_group2.reshape(1, dim)
-        tst_label[0] = 0
-        tst_label[1] = 1
-
-        """
-        print 'standardization'
-        trn_data_scaled = preprocessing.scale(trn_data)
-        tst_data_scaled = preprocessing.scale(tst_data)
-        print trn_data_scaled
-        print tst_data_scaled
-        clf = NuSVC(nu=0.5, kernel = 'linear')
-        clf.fit(trn_data_scaled, trn_label)
-        pred_label = clf.predict(tst_data_scaled)
-        print pred_label
-        print clf.decision_function(tst_data_scaled)
-        accu = sum(pred_label == tst_label)/float(len(pred_label))
-        """
-
-    elif args.exptype == 'idvclas_svm_on1st':
-        dim = args.nvoxel*args.nTR
-        trn_data  = np.zeros((nsubj_group*2-2, dim))
-        tst_data  = np.zeros((2, dim))
-
-        trn_label = np.zeros(nsubj_group*2-2)
-        tst_label = np.zeros(2)
-
-        for i in xrange(align_data_group1_loo.shape[2]):
-            trn_data[i,:] = align_data_group1_loo[:,:,i].reshape(1, dim)
-            trn_label[i] = 0
-            trn_data[i+nsubj_group-1,:] = align_data_group2_loo[:,:,i].reshape(1, dim)
-            trn_label[i+nsubj_group-1] = 1
-
-        tst_data[0, :] = pred_data_group1.reshape(1, dim)
-        tst_data[1, :] = pred_data_group2.reshape(1, dim)
-        tst_label[0] = 0
-        tst_label[1] = 1
-
-        """
-        print 'standardization'
-        trn_data = preprocessing.scale(trn_data)
-        tst_data = preprocessing.scale(tst_data)
-        clf = NuSVC(nu=0.5, kernel = 'linear')
-        clf.fit(trn_data, trn_label)
-        pred_label = clf.predict(tst_data)
-        print pred_label
-        print clf.decision_function(tst_data)
-        accu = sum(pred_label == tst_label)/float(len(pred_label))
-        """
-
-    print 'standardization'
-    #print trn_data
-    #print tst_data
-    #trn_data_scaled = preprocessing.scale(trn_data)
-    #tst_data_scaled = preprocessing.scale(tst_data)
-    scaler = preprocessing.StandardScaler().fit(trn_data)
-    trn_data_scaled = scaler.transform(trn_data)
-    tst_data_scaled = scaler.transform(tst_data)
-    #print trn_data_scaled
-    #print tst_data_scaled
-    clf = NuSVC(nu=0.5, kernel = 'linear')
-    clf.fit(trn_data_scaled, trn_label)
-    pred_label = clf.predict(tst_data_scaled)
-    print pred_label
-    print clf.decision_function(tst_data_scaled)
-    accu = sum(pred_label == tst_label)/float(len(pred_label))
+                np.savez_compressed(options['working_path']+opt_group_folder+args.align_algo+'_acc_'+str(itr)+'.npz',accu = accu)
+                #np.savez_compressed(options['working_path']+opt_group_folder+args.align_algo+'_acc_'+str(10)+'.npz',accu = accu)
 
 
-    
-    if args.align_algo in ['ppca_idvclas','pica_idvclas']:
-        for it in range(11):
-            np.savez_compressed(options['working_path']+opt_group_folder+args.align_algo+'_acc_'+str(it)+'.npz',accu = accu)
-    else:
-        np.savez_compressed(options['working_path']+opt_group_folder+args.align_algo+'_acc_'+str(itr)+'.npz',accu = accu)
-        #np.savez_compressed(options['working_path']+opt_group_folder+args.align_algo+'_acc_'+str(10)+'.npz',accu = accu)
-    print options['working_path']+opt_group_folder+args.align_algo+'_acc_'+str(itr)+'.npz'
-    print np.mean(accu)
-
+            print options['working_path']+opt_group_folder+args.align_algo+'_acc_'+str(itr)+'.npz'
+            print np.mean(accu)

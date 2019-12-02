@@ -122,24 +122,21 @@ if os.path.exists(options['working_path']+args.align_algo+'_current.npz'):
 else:
   new_niter = 0
 
-re_arr_data = np.moveaxis(data, 0, -1)
-print re_arr_data.shape
-
 while (new_niter<args.niter):  
-    new_niter = algo.align(re_arr_data, options, args, "")
+    new_niter = algo.align(align_data, options, args)
 
 
 # form WS matrix
 print 'start transform'
-workspace = np.load(options['working_path']+args.align_algo+'__'+str(new_niter)+'.npz')
+workspace = np.load(options['working_path']+args.align_algo+'_'+str(args.niter)+'.npz')
 W, S = form_WS_matrix.transform(args, options, workspace, nsubjs)
 
 if args.format == None:
-    np.savez_compressed(options['output_path']+args.align_algo+str(new_niter)+'_WS.npz',
+    np.savez_compressed(options['output_path']+args.align_algo+str(args.niter)+'_WS.npz',
                         W=W, S=S)
 elif args.format == 'MAT':
     WS_mat = {'W' : W}
     WS_mat['S'] = S
-    scipy.io.savemat(options['output_path']+args.align_algo+str(new_niter)+'_WS.mat',WS_mat)
+    scipy.io.savemat(options['output_path']+args.align_algo+str(args.niter)+'_WS.mat',WS_mat)
 
 print 'alignment done'
